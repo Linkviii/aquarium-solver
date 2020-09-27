@@ -69,6 +69,17 @@ impl WallState {
             Wall => '#',
         }
     }
+
+    fn from_bool(state: bool) -> WallState {
+        match state {
+            true => WallState::Wall,
+            false => WallState::None,
+        }
+    }
+
+    fn rep_bool(state: bool) -> char {
+        WallState::from_bool(state).rep()
+    }
 }
 
 #[derive(PartialEq, Copy, Clone)]
@@ -85,167 +96,132 @@ impl FloorState {
             Bott => '#',
         }
     }
+
+    fn from_bool(state: bool) -> FloorState {
+        match state {
+            true => FloorState::Bott,
+            false => FloorState::None,
+        }
+    }
+
+    fn rep_bool(state: bool) -> char {
+        FloorState::from_bool(state).rep()
+    }
 }
 
-// Should probably change to this
 
-// struct Cell {
-//     state: CellState,
-//     partition: isize
-// }
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+struct Cell {
+    state: CellState,
+    partition: isize,
+// Could include the board cooridnate, but I don't think I want that. 
+}
 
-// impl Cell {
-//     fn rep(&self) -> char {
-//         self.rep()
-//     }
-// }
+impl Cell {
+    fn rep(&self) -> char {
+        self.state.rep()
+    }
+}
 
 struct Board {
     // Visual properties of the board
     width: usize,
     height: usize,
     // width x height
-    cells: Vec<CellState>,
-    // width-1 x height
-    walls: Vec<WallState>,
-    // width x height-1
-    floors: Vec<FloorState>,
+    cells: Vec<Cell>,
     // height
     row_hints: Vec<isize>,
     // width
     col_hints: Vec<isize>,
-
-    // Meta properties of the board
-    partitions: Vec<isize>,
-    // TODO ?
-    // First draft described the board by its walls and floors,
-    // but that is redundant information.
-    // Would probably be best to remove floors and walls.
 }
 
 impl Board {
-    fn cell_at(&self, ix: usize, iy: usize) -> CellState {
+
+    fn cell_at(&self, ix: usize, iy: usize) -> Cell {
         assert!(ix < self.width && iy < self.height);
         let row_offset = iy * self.width;
         self.cells[row_offset + ix]
     }
 
+    fn cell_state_at(&self, ix: usize, iy: usize) -> CellState {
+        assert!(ix < self.width && iy < self.height);
+        let row_offset = iy * self.width;
+        self.cells[row_offset + ix].state
+    }
+
     fn set_cell_at(&mut self, ix: usize, iy: usize, state: CellState) {
         assert!(ix < self.width && iy < self.height);
         let row_offset = iy * self.width;
-        self.cells[row_offset + ix] = state;
+        self.cells[row_offset + ix].state = state;
     }
 
     fn partition_at(&self, ix: usize, iy: usize) -> isize {
         assert!(ix < self.width && iy < self.height);
         let row_offset = iy * self.width;
-        self.partitions[row_offset + ix]
+        self.cells[row_offset + ix].partition
     }
 
-    fn wall_at(&self, ix: usize, iy: usize) -> WallState {
-        assert!(ix < self.width - 1 && iy < self.height);
-        let row_offset = iy * (self.width - 1);
-        self.walls[row_offset + ix]
+    //---
+    //
+    fn wall_at(&self, ix: usize, iy: usize) -> bool {
+        assert!(ix + 1 < self.width && iy < self.height);
+        self.partition_at(ix, iy) != self.partition_at(ix + 1, iy)
     }
     //
-    fn floor_at(&self, ix: usize, iy: usize) -> FloorState {
-        assert!(ix < self.width && iy < self.height - 1);
-        let row_offset = iy * self.width;
-        self.floors[row_offset + ix]
-    }
-
-    /// Recursively set all adjacent cells not seperated by a wall or floor to be in this partition
-    fn partion_cell(&mut self, ix: usize, iy: usize, partition: isize) -> bool {
-        let cell_row_offset = iy * self.width;
-
-        // already partioned
-        if self.partitions[cell_row_offset + ix] != -1 {
-            return false;
-        }
-
-        //
-        self.partitions[cell_row_offset + ix] = partition;
-
-        if iy != 0 && self.floor_at(ix, iy - 1) != FloorState::Bott {
-            self.partion_cell(ix, iy - 1, partition);
-        }
-        if ix != 0 && self.wall_at(ix - 1, iy) != WallState::Wall {
-            self.partion_cell(ix - 1, iy, partition);
-        }
-        if iy + 1 != self.height && self.floor_at(ix, iy) != FloorState::Bott {
-            self.partion_cell(ix, iy + 1, partition);
-        }
-        if ix + 1 != self.width && self.wall_at(ix, iy) != WallState::Wall {
-            self.partion_cell(ix + 1, iy, partition);
-        }
-
-        true
-    }
-
-    /// Derive the partitions of the board based on the walls and floors
-    fn init_partitions(&mut self) {
-        let mut partion = 0;
-        for iy in 0..self.height {
-            for ix in 0..self.width {
-                if self.partion_cell(ix, iy, partion) {
-                    partion += 1;
-                }
-            }
-        }
+    fn floor_at(&self, ix: usize, iy: usize) -> bool {
+        assert!(ix < self.width && iy + 1 < self.height);
+        self.partition_at(ix, iy) != self.partition_at(ix, iy + 1)
     }
 
     // TODO
     fn make(width: usize, height: usize) -> Board {
-        let mut board = Board {
+        let board = Board {
             width,
             height,
-            cells: Vec::new(),
-            walls: Vec::new(),
-            floors: Vec::new(),
+            cells: vec![
+                Cell {
+                    state: CellState::Empty,
+                    partition: -1
+                };
+                width * height
+            ],
             row_hints: vec![0; height],
             col_hints: vec![0; width],
-            partitions: vec![-1; width * height],
         };
-        board.init_partitions();
         board
     }
 
     fn make_b0() -> Board {
         // 6x6 Easy ID: 3,095,209 https://www.puzzle-aquarium.com/specfic.php
 
-        let walls = {
-            use WallState::*;
-            vec![
-                None, None, None, Wall, None, //
-                None, Wall, None, Wall, None, //
-                Wall, Wall, Wall, Wall, Wall, //
-                None, None, Wall, Wall, Wall, //
-                None, None, None, None, Wall, //
-                None, Wall, None, None, None,
-            ]
-        };
-        let floors = {
-            use FloorState::*;
-            vec![
-                None, None, Bott, Bott, None, None, //
-                Bott, None, Bott, None, Bott, Bott, //
-                None, Bott, None, None, None, None, //
-                None, None, None, Bott, Bott, None, //
-                None, None, Bott, Bott, Bott, None,
-            ]
-        };
+        let width = 6;
+        let height = 6;
+        let count = width * height;
+        let partitions = vec![
+            00, 00, 00, 00, 01, 01, //
+            00, 00, 02, 02, 01, 01, //
+            03, 00, 03, 02, 04, 05, //
+            03, 03, 03, 02, 04, 05, //
+            03, 03, 03, 03, 03, 05, //
+            03, 03, 05, 05, 05, 05,
+        ];
 
-        let mut board = Board {
-            width: 6,
-            height: 6,
-            cells: vec![CellState::Empty; 6 * 6],
-            walls,
-            floors,
+        let cells: Vec<_> = partitions
+            .iter()
+            .map(|&partition| Cell {
+                state: CellState::Empty,
+                partition,
+            })
+            .collect();
+
+        let board = Board {
+            width,
+            height,
+            cells,
             row_hints: vec![2, 4, 3, 2, 1, 4],
             col_hints: vec![1, 2, 1, 3, 5, 4],
-            partitions: vec![-1; 6 * 6],
         };
-        board.init_partitions();
+
         board
     }
 
@@ -253,7 +229,7 @@ impl Board {
         let mut board = Board::make_b0();
         use CellState::*;
 
-        let cells = vec![
+        let states = vec![
             Invalid, Invalid, Invalid, Invalid, Flooded, Flooded, //
             Flooded, Flooded, Invalid, Invalid, Flooded, Flooded, //
             Invalid, Flooded, Invalid, Flooded, Flooded, Invalid, //
@@ -262,7 +238,9 @@ impl Board {
             Invalid, Invalid, Flooded, Flooded, Flooded, Flooded,
         ];
 
-        board.cells = cells;
+        for (cell, state) in board.cells.iter_mut().zip(states) {
+            cell.state = state;
+        }
 
         board
     }
@@ -294,8 +272,10 @@ impl Board {
     }
 
     fn print(&self) {
-        let print_index = true;
+        // let print_index = true;
+        let print_index = false;
         let print_partitions = false;
+        // let print_partitions = true;
 
         // Todo: Use format width for numbers
 
@@ -319,10 +299,10 @@ impl Board {
                 let row_offset = iy * self.width;
                 &self.cells[row_offset..row_offset + self.width]
             };
-            let row_walls = {
-                let row_offset = iy * (self.width - 1);
-                &self.walls[row_offset..row_offset + self.width - 1]
-            };
+
+            let row_walls: Vec<_> = (0..self.width - 1)
+                .map(|ix| WallState::rep_bool(self.wall_at(ix, iy)))
+                .collect();
 
             // Print cells and walls
             for ix in 0..self.width {
@@ -332,18 +312,18 @@ impl Board {
                     print!(
                         "{}{}",
                         row_cells[ix].rep(),
-                        self.partitions[ix + iy * self.width]
+                        self.cells[ix + iy * self.width].partition
                     );
                 }
 
                 if ix + 1 != self.width {
-                    print!("{}", row_walls[ix].rep());
+                    print!("{}", row_walls[ix]);
                 }
             }
 
             let n_row = row_cells
                 .iter()
-                .filter(|&&state| state == CellState::Flooded)
+                .filter(|&&cell| cell.state == CellState::Flooded)
                 .count();
             let row_remainder = self.row_hints[iy] - isize::try_from(n_row).unwrap();
             print!("# {}", row_remainder);
@@ -356,32 +336,29 @@ impl Board {
             println!();
             // Print floors
             if iy + 1 != self.height {
-                let row_floor = {
-                    let row_offset = iy * self.width;
-                    &self.floors[row_offset..row_offset + self.width]
-                };
+                let row_floor: Vec<_> = (0..self.width).map(|ix| self.floor_at(ix, iy)).collect();
 
                 print!("  #");
                 for (ix, it) in row_floor.iter().enumerate() {
-                    let rep = it.rep();
+                    let rep = FloorState::rep_bool(*it);
 
                     // Up, Left (this), Right, Down
                     let walled_neighbors = [
                         if ix + 1 == self.width {
                             true
                         } else {
-                            self.wall_at(ix, iy) == WallState::Wall
+                            self.wall_at(ix, iy)
                         },
-                        *it == FloorState::Bott,
+                        *it,
                         if ix + 1 == self.width {
                             true
                         } else {
-                            self.floor_at(ix + 1, iy) == FloorState::Bott
+                            self.floor_at(ix + 1, iy)
                         },
                         if iy + 1 == self.height || ix + 1 == self.width {
                             true
                         } else {
-                            self.wall_at(ix, iy + 1) == WallState::Wall
+                            self.wall_at(ix, iy + 1)
                         },
                     ];
                     let count = walled_neighbors.iter().filter(|&&x| x).count();
@@ -411,15 +388,16 @@ impl Board {
         print!("   ");
         for ix in 0..self.width {
             let col_x = col_stides.next().unwrap();
-            let count = col_x.iter().filter(|&&it| it == CellState::Flooded).count();
+            let count = col_x
+                .iter()
+                .filter(|&&it| it.state == CellState::Flooded)
+                .count();
 
             let col_remainder = self.col_hints[ix] - isize::try_from(count).expect("");
             print!("{}  ", { col_remainder });
-
-            // index
-            // print!(" |  {}", iy);
         }
         println!();
+        //
         if print_index {
             print!("  _");
             for _ in 0..self.width * 3 {
@@ -445,12 +423,11 @@ impl Board {
                 let mut map_totals = HashMap::new(); // state: count
 
                 for ix in 0..self.width {
-                    let part = self.partition_at(ix, iy);
-                    let count = map_sizes.entry(part).or_insert(0);
+                    let cell = self.cell_at(ix, iy);
+                    let count = map_sizes.entry(cell.partition).or_insert(0);
                     *count += 1;
 
-                    // map_states.entry(part).or_insert(row_cells[ix]);
-                    map_states.entry(part).or_insert(self.cell_at(ix, iy));
+                    map_states.entry(cell.partition).or_insert(cell.state);
                 }
                 for (part, state) in &map_states {
                     let total = map_totals.entry(*state).or_insert(0);
@@ -464,19 +441,15 @@ impl Board {
                 let remainder =
                     self.row_hints[iy] - map_totals.get(&CellState::Flooded).unwrap_or(&0);
                 for ix in 0..self.width {
-                    // let cell_ix = row_cells[ix];
                     let cell_ix = self.cell_at(ix, iy);
-                    if cell_ix != CellState::Empty {
+                    if cell_ix.state != CellState::Empty {
                         continue;
                     };
-                    // let part_ix = row_partitions[ix];
-                    let part_ix = self.partition_at(ix, iy);
 
                     // !!!
-                    if map_sizes[&part_ix] > remainder {
+                    if map_sizes[&cell_ix.partition] > remainder {
                         println!("Invalidate {}, {}", ix, iy);
                         self.invalidate(ix, iy);
-                        // return; // XXX
                         updated = true;
                     }
                 }

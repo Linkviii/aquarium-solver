@@ -31,6 +31,12 @@ use strided::Stride;
 /// Every cell in the same partition and above an invalid cell must be invalid.
 /// Every cell in the same partition and below a  flooded cell must be flooded.
 ///
+/// This behaviour mimics filling a volume with water.
+///
+/// Each row and column has a hint describing how many cells in the given row or column need filled.
+///
+/// The puzzle is solved when the count of cells filled exactly matches each of the associated hints
+/// and the rules describing cell behaviour are followed.
 ///
 /// Note: Cells can be in the same row and partition without directly touching. i.e. a 'U' shape:
 /// ```

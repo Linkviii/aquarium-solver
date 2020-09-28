@@ -2,12 +2,12 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
+use maplit::hashmap;
 use std::collections::HashMap;
 
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use strided::Stride;
-
 /// Aquarium puzzle solver
 /// https://www.puzzle-aquarium.com/
 ///
@@ -293,9 +293,9 @@ impl Board {
 
     fn print(&self) {
         // let print_index = true;
-        let print_index = false;
-        let print_partitions = false;
         // let print_partitions = true;
+        let print_partitions = false;
+        let print_index = false;
 
         let cell_width = Cell::rep_width();
         let wall_width = 1;
@@ -493,8 +493,36 @@ impl Board {
                 map_totals
             };
 
+        // For each col: {partition: iy_list}
+        let col_partitions = {
+            // Init column values without striding
+            //
+            // Init each col with the value from the first row
+            let mut cols: Vec<HashMap<_, _>> = (0..self.width)
+                .map(|ix| {
+                    let mut map_idx = HashMap::new();
+                    let cell = self.cell_at(ix, 0);
+                    map_idx.insert(cell.partition, vec![0]);
+                    map_idx
+                })
+                .collect();
+            // Fill in the remaining values
+            for iy in 1..self.height {
+                for ix in 0..self.width {
+                    let cell = self.cell_at(ix, iy);
+                    let map_idx = &mut cols[ix];
+                    let list = map_idx.entry(cell.partition).or_insert(Vec::new());
+                    list.push(iy);
+                }
+            }
+            cols
+        };
+        // println!("{:#?}", col_partitions);
+        // return; // DEBUG
+
         loop {
             let mut updated = false;
+            // Invalidate rows:
             // look for n_row_part > remaining => invalidate
             for iy in (0..self.height).rev() {
                 let map_sizes = &row_partitions[iy]; // partitan : size
@@ -507,6 +535,7 @@ impl Board {
 
                 let remainder =
                     self.row_hints[iy] - map_totals.get(&CellState::Flooded).unwrap_or(&0);
+                // For each partition in the row
                 for ix in 0..self.width {
                     let cell_ix = self.cell_at(ix, iy);
                     if cell_ix.state != CellState::Empty {
@@ -515,13 +544,14 @@ impl Board {
 
                     // !!!
                     if map_sizes[&cell_ix.partition] > remainder {
-                        println!("Invalidate {}, {}", ix, iy);
+                        println!("R1: Invalidate {}, {} ", ix, iy);
                         self.invalidate(ix, iy);
                         updated = true;
                     }
                 }
             }
 
+            // Flood rows:
             // Look for width - n_row_part < remainder =>  flood
             for iy in 0..self.height {
                 let map_sizes = &row_partitions[iy]; // partitan : size
@@ -531,25 +561,150 @@ impl Board {
                 let remainder =
                     self.row_hints[iy] - map_totals.get(&CellState::Flooded).unwrap_or(&0);
 
-                    for ix in 0..self.width {
-                        let cell_ix = self.cell_at(ix, iy);
-                        if cell_ix.state != CellState::Empty {
-                            continue;
-                        };
-                        // !!!
-                        if isize::try_from(self.width).unwrap() - map_sizes[&cell_ix.partition] < remainder {
-                            println!("Flood {}, {}", ix, iy);
-                            self.flood(ix, iy);
-                            updated = true;
-                        }
+                for ix in 0..self.width {
+                    let cell_ix = self.cell_at(ix, iy);
+                    if cell_ix.state != CellState::Empty {
+                        continue;
+                    };
+                    // !!!
+
+                    // If it is imposable to meet the hint without this partition
+                    if map_totals[&CellState::Empty] - map_sizes[&cell_ix.partition] < remainder {
+                        println!("R2: Flood {}, {}", ix, iy);
+                        self.flood(ix, iy);
+                        updated = true;
                     }
+                }
             }
+
+            // Cols:
+            for ix in 0..self.width {
+                let col_x: Vec<_> = self
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .filter_map(|pair| {
+                        let (i, cell) = pair;
+                        if i % self.width == ix {
+                            Some(cell)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let map_sizes = &col_partitions[ix];
+                //
+                // For each partion: {state: count}
+                let map_state_totals = {
+                    let mut map_part = HashMap::new();
+                    for cell in col_x.iter() {
+                        let map_state =
+                            &mut map_part.entry(cell.partition).or_insert(HashMap::new());
+                        let count = map_state.entry(cell.state).or_insert(0);
+                        *count += 1;
+                    }
+                    map_part
+                };
+
+                let col_count: isize = col_x
+                    .iter()
+                    .filter(|cell| cell.state == CellState::Flooded)
+                    .count()
+                    .try_into()
+                    .unwrap();
+                let remainder = self.col_hints[ix] - col_count;
+                // println!("Col {} counts: {:?}", ix, map_sizes);
+                // println!("Col {} counts: {:#?}", ix, map_state_totals);
+                //
+
+                let part_x = &col_partitions[ix];
+
+                for (partition, iy_list) in part_x {
+                    let this_empty = map_state_totals[partition]
+                        .get(&CellState::Empty)
+                        .unwrap_or(&0);
+
+                    let this_invalid = map_state_totals[partition]
+                        .get(&CellState::Invalid)
+                        .unwrap_or(&0);
+
+                    let partition_extra = this_empty - remainder;
+                    // println!("Col {}, Partition: {}, Extra: {}", ix, partition, partition_extra);
+
+                    if partition_extra > 0 {
+                        let invalid_cell_idx = this_invalid + partition_extra - 1;
+                        let iy = iy_list[usize::try_from(invalid_cell_idx).unwrap()];
+                        println!("R3: Invalidate {}, {}", ix, iy);
+                        self.invalidate(ix, iy);
+                        updated = true;
+                    }
+
+                    let other_empty_count: isize = map_state_totals
+                        .iter()
+                        .filter_map(|it| {
+                            if it.0 != partition {
+                                Some(it.1.get(&CellState::Empty).unwrap_or(&0))
+                            } else {
+                                None
+                            }
+                        })
+                        .sum();
+                    // Number of cells leftover if you assume all other empty cells get filled
+                    let partition_required = remainder - other_empty_count;
+                    if partition_required > 0 {
+                        let flood_cell_idx = this_invalid + (this_empty - partition_required);
+                        // println!(
+                        //     "col {}, part {}: req {}, other empt {}. Part idx {}",
+                        //     ix, partition, partition_required, other_empty_count, flood_cell_idx
+                        // );
+                        let iy = iy_list[usize::try_from(flood_cell_idx).unwrap()];
+                        println!("R4: Flood {}, {}", ix, iy);
+                        self.flood(ix, iy);
+                        updated = true;
+                    }
+                } // Partition loop
+            } // Column loop
+              // return; // DEBUG
 
             if !updated {
                 break;
             }
         }
     }
+
+    fn is_solved(&self) -> bool {
+        for iy in 0..self.height {
+            let offset = self.width * iy;
+            let row = &self.cells[offset..offset + self.width];
+            let count: isize = row
+                .iter()
+                .filter(|&cell| cell.state == CellState::Flooded)
+                .count()
+                .try_into()
+                .unwrap();
+            if count != self.row_hints[iy] {
+                return false;
+            }
+        }
+        //
+        for ix in 0..self.width {
+            let col = (0..self.height).map(|iy| self.cell_at(ix, iy));
+            let count: isize = col
+                .filter(|&cell| cell.state == CellState::Flooded)
+                .count()
+                .try_into()
+                .unwrap();
+            if count != self.col_hints[ix] {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+fn print_legend() {
+    // todo
 }
 
 fn game() {
@@ -559,6 +714,8 @@ fn game() {
     let mut board = Board::make_b0();
     let board_solved = Board::make_b0_solved();
     board.print();
+    println!("Board is solved: {}", board.is_solved());
+    println!("\n");
 
     //
     // board.flood(0, 0);
@@ -566,6 +723,7 @@ fn game() {
     board.solve();
     println!("\n");
     board.print();
+    println!("Board is solved: {}", board.is_solved());
 
     // println!("\n");
     // board_solved.print();
@@ -583,20 +741,45 @@ fn idk() {
     // let FORMAT = "{:>2}";
 
     // println!(format!("|{}|", FORMAT), a);
-    println!("|{:>2}|", b);
-    println!("|{:>2}|", c);
+    // println!("|{:>2}|", b);
+    // println!("|{:>2}|", c);
 
-    let n: usize = 11;
-    // let n: usize = 3;
+    // let n: usize = 11;
+    // // let n: usize = 3;
 
-    let mut board = Board::make(n, n);
-    for hint in board.row_hints.iter_mut() {
-        *hint = n.try_into().unwrap();
+    // let mut board = Board::make(n, n);
+    // for hint in board.row_hints.iter_mut() {
+    //     *hint = n.try_into().unwrap();
+    // }
+    // for hint in board.col_hints.iter_mut() {
+    //     *hint = n.try_into().unwrap();
+    // }
+    // board.print();
+
+    let maps = hashmap! {
+        3 => hashmap!{CellState::Empty => 3},
+        5 => hashmap!{CellState::Empty => 5} ,
+        7 => hashmap!{CellState::Empty => 7} ,
+    };
+
+    println!("{:#?}", maps);
+    let part = 3;
+
+    let other: isize = maps
+        .iter()
+        .filter_map(|it| {
+            if *it.0 != part {
+                Some(it.1.get(&CellState::Empty).unwrap_or(&0))
+            } else {
+                None
+            }
+        })
+        .sum();
+
+    for it in maps.iter() {
+        println!("{:?}", it);
     }
-    for hint in board.col_hints.iter_mut() {
-        *hint = n.try_into().unwrap();
-    }
-    board.print();
+    println!("Other: {}", other);
 }
 
 fn main() {

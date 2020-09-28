@@ -2,7 +2,10 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
+use std::collections::HashMap;
+
 use std::convert::TryFrom;
+use std::convert::TryInto;
 use strided::Stride;
 
 /// Aquarium puzzle solver
@@ -109,17 +112,35 @@ impl FloorState {
     }
 }
 
-
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 struct Cell {
     state: CellState,
     partition: isize,
-// Could include the board cooridnate, but I don't think I want that. 
+    // Could include the board cooridnate, but I don't think I want that.
 }
 
 impl Cell {
-    fn rep(&self) -> char {
-        self.state.rep()
+    fn rep(&self, show_partition: bool) -> String {
+        if !show_partition {
+            format!("{}  ", self.state.rep())
+        } else {
+            format!("{}{:>2}", self.state.rep(), self.partition)
+        }
+    }
+
+    fn rep_width() -> usize {
+        {
+            // Todo: Learn how to check this at compile time
+            // let null_cell = Cell {
+            //     state: CellState::Empty,
+            //     partition: 9,
+            // };
+            // assert_eq!(
+            //     null_cell.rep(false).chars().count(),
+            //     null_cell.rep(true).chars().count(),
+            // );
+        }
+        3
     }
 }
 
@@ -136,7 +157,6 @@ struct Board {
 }
 
 impl Board {
-
     fn cell_at(&self, ix: usize, iy: usize) -> Cell {
         assert!(ix < self.width && iy < self.height);
         let row_offset = iy * self.width;
@@ -277,24 +297,40 @@ impl Board {
         let print_partitions = false;
         // let print_partitions = true;
 
+        let cell_width = Cell::rep_width();
+        let wall_width = 1;
+
+        let board_width = wall_width + (cell_width + wall_width) * self.width;
+        let board_bounds = "#".repeat(board_width);
+
+        let left_margin = "   ";
+
+        let right_clue_width = 4;
+        let right_clue_space = " ".repeat(right_clue_width);
+
         // Todo: Use format width for numbers
 
         // print top
-        print!("   ");
+        // '   N0  N1 N3'
+        print!("{} ", left_margin);
         for hint in &self.col_hints {
-            print!("{}  ", hint);
+            print!("{:>2}  ", hint);
         }
         println!();
 
-        print!("  ");
-        for _ in 0..self.width * 2 + self.width + 1 {
-            print!("#");
-        }
+        // '  #########'
+        print!("{}{}", left_margin, board_bounds);
         println!();
 
         //
         for iy in 0..self.height {
-            print!("{} #", self.row_hints[iy]);
+            // Cell row: 'N # C0 W0 C1 W1 C2 # M' ? ' |  I'
+            // i.e. '3 #   |   #X  #*  # 2'
+            // i.e. '3 #* 0|* 0#X 1#  2# 1 | 1'
+
+            // Left Margin: 'N #'
+            print!("{:>2} #", self.row_hints[iy]);
+            //
             let row_cells = {
                 let row_offset = iy * self.width;
                 &self.cells[row_offset..row_offset + self.width]
@@ -304,46 +340,44 @@ impl Board {
                 .map(|ix| WallState::rep_bool(self.wall_at(ix, iy)))
                 .collect();
 
-            // Print cells and walls
+            // Cells and walls: 'C0 W0 C1 W1 C2'
             for ix in 0..self.width {
-                if !print_partitions {
-                    print!("{} ", row_cells[ix].rep());
-                } else {
-                    print!(
-                        "{}{}",
-                        row_cells[ix].rep(),
-                        self.cells[ix + iy * self.width].partition
-                    );
-                }
+                print!("{}", row_cells[ix].rep(print_partitions));
 
                 if ix + 1 != self.width {
                     print!("{}", row_walls[ix]);
                 }
             }
 
+            // Close row and remainder: '# M'
             let n_row = row_cells
                 .iter()
                 .filter(|&&cell| cell.state == CellState::Flooded)
                 .count();
             let row_remainder = self.row_hints[iy] - isize::try_from(n_row).unwrap();
-            print!("# {}", row_remainder);
+            print!("# {:>2}", row_remainder);
 
-            // Row index
+            // Row index: ' | I'
             if print_index {
-                print!(" |  {}", iy);
+                print!(" |  {:>2}", iy);
             }
 
             println!();
-            // Print floors
+            //
+            // Floor row: '  # F0 J0 F1 J1 #' ? '   |'
+            // i.e. '  #---+---#####---#'
+            // i.e. '  #---+---#####---#   |'
             if iy + 1 != self.height {
                 let row_floor: Vec<_> = (0..self.width).map(|ix| self.floor_at(ix, iy)).collect();
 
-                print!("  #");
+                // Left margin: '  #'
+                print!("{}#", left_margin);
                 for (ix, it) in row_floor.iter().enumerate() {
                     let rep = FloorState::rep_bool(*it);
+                    let rep: String = std::iter::repeat(rep).take(cell_width).collect();
 
                     // Up, Left (this), Right, Down
-                    let walled_neighbors = [
+                    let junction_neighbors = [
                         if ix + 1 == self.width {
                             true
                         } else {
@@ -361,31 +395,33 @@ impl Board {
                             self.wall_at(ix, iy + 1)
                         },
                     ];
-                    let count = walled_neighbors.iter().filter(|&&x| x).count();
+                    let count = junction_neighbors.iter().filter(|&&x| x).count();
                     // `if any` would have been just as fine I guess
-                    let corner = if count >= 2 { '#' } else { '+' };
+                    let junction = if count >= 2 { '#' } else { '+' };
 
-                    print!("{}{}{}", rep, rep, corner);
+                    // Cell floor and junction: 'F_ix J_ix'
+                    print!("{}{}", rep, junction);
                 }
                 if print_index {
-                    print!("   |  ");
+                    // '   |'
+                    print!("{}|", right_clue_space);
                 }
                 println!();
             }
         }
 
-        // print bottom
-        print!("  ");
-        for _ in 0..self.width * 2 + self.width + 1 {
-            print!("#");
+        // Print bottom: '  #########' ? '  |'
+        print!("{}{}", left_margin, board_bounds);
+        if print_index {
+            print!("{}|", right_clue_space);
         }
         println!();
 
-        // counts
-        let all = Stride::new(&self.cells);
-        let mut col_stides = all.substrides(self.width);
+        // Counts: '     M0 M1 M3' ? '   |'
+        let all_cols = Stride::new(&self.cells);
+        let mut col_stides = all_cols.substrides(self.width);
 
-        print!("   ");
+        print!("{} ", left_margin);
         for ix in 0..self.width {
             let col_x = col_stides.next().unwrap();
             let count = col_x
@@ -394,45 +430,76 @@ impl Board {
                 .count();
 
             let col_remainder = self.col_hints[ix] - isize::try_from(count).expect("");
-            print!("{}  ", { col_remainder });
+            print!("{:>2}  ", col_remainder);
         }
+
+        if print_index {
+            print!("{}|", right_clue_space);
+        }
+
         println!();
         //
+        //
         if print_index {
-            print!("  _");
-            for _ in 0..self.width * 3 {
-                print!("_");
-            }
+            // Axis line: '   _________|'
+            print!(
+                "{}{}|",
+                left_margin,
+                "_".repeat(board_width + right_clue_width)
+            );
             println!();
-            print!("   ");
+
+            // Axis labels: '    0  1  2  3'
+            print!("{} ", left_margin);
             for ix in 0..self.width {
-                print!("{}  ", ix);
+                print!("{:>2}  ", ix);
             }
             println!();
         }
     }
 
-    fn solve(&mut self) {
-        use std::collections::HashMap;
-        loop {
-            let mut updated = false;
-            // look for n_row_part > remaining -> invalidate
-            for iy in (0..self.height).rev() {
-                let mut map_sizes = HashMap::new(); // partitan : size
-                let mut map_states = HashMap::new(); // partitian : state
-                let mut map_totals = HashMap::new(); // state: count
+    /// For the row iy, the state of each partition in the row
+    fn row_partition_states(&self, iy: usize) -> HashMap<isize, CellState> {
+        let mut map_states = HashMap::new();
+        for ix in 0..self.width {
+            let cell = self.cell_at(ix, iy);
 
+            map_states.entry(cell.partition).or_insert(cell.state);
+        }
+        map_states
+    }
+
+    fn solve(&mut self) {
+        let row_partitions: Vec<_> = (0..self.height)
+            .map(|iy| {
+                let mut map_sizes = HashMap::new();
                 for ix in 0..self.width {
                     let cell = self.cell_at(ix, iy);
                     let count = map_sizes.entry(cell.partition).or_insert(0);
                     *count += 1;
-
-                    map_states.entry(cell.partition).or_insert(cell.state);
                 }
-                for (part, state) in &map_states {
+                map_sizes
+            })
+            .collect();
+
+        // For the row iy, The number of cells in each state
+        let row_state_counts =
+            |map_sizes: &HashMap<isize, isize>, map_states: &HashMap<isize, CellState>| {
+                let mut map_totals = HashMap::new();
+                for (part, state) in map_states.iter() {
                     let total = map_totals.entry(*state).or_insert(0);
                     *total += map_sizes[part];
                 }
+                map_totals
+            };
+
+        loop {
+            let mut updated = false;
+            // look for n_row_part > remaining => invalidate
+            for iy in (0..self.height).rev() {
+                let map_sizes = &row_partitions[iy]; // partitan : size
+                let map_states = self.row_partition_states(iy); // partitian : state
+                let map_totals = row_state_counts(map_sizes, &map_states); // state: count
 
                 // println!("{} filled: {:?}", iy, map_totals);
                 // println!("{} filled: {:?}", iy, map_states);
@@ -453,6 +520,29 @@ impl Board {
                         updated = true;
                     }
                 }
+            }
+
+            // Look for width - n_row_part < remainder =>  flood
+            for iy in 0..self.height {
+                let map_sizes = &row_partitions[iy]; // partitan : size
+                let map_states = self.row_partition_states(iy); // partitian : state
+                let map_totals = row_state_counts(map_sizes, &map_states); // state: count
+
+                let remainder =
+                    self.row_hints[iy] - map_totals.get(&CellState::Flooded).unwrap_or(&0);
+
+                    for ix in 0..self.width {
+                        let cell_ix = self.cell_at(ix, iy);
+                        if cell_ix.state != CellState::Empty {
+                            continue;
+                        };
+                        // !!!
+                        if isize::try_from(self.width).unwrap() - map_sizes[&cell_ix.partition] < remainder {
+                            println!("Flood {}, {}", ix, iy);
+                            self.flood(ix, iy);
+                            updated = true;
+                        }
+                    }
             }
 
             if !updated {
@@ -482,10 +572,31 @@ fn game() {
 }
 
 fn idk() {
-    // use std::convert::TryInto;
-    // let a: usize = 0;
-    // let b:isize = (a).try_into().unwrap()-1;
-    // println!("{}", b);
+    // let width = 3;
+    // let char_a = 'a';
+    // let char_pound = '#';
+    // println!("|{:2$>1$}|", char_pound, width, char_a);
+    let a = -1;
+    let b = 1;
+    let c = 10;
+
+    // let FORMAT = "{:>2}";
+
+    // println!(format!("|{}|", FORMAT), a);
+    println!("|{:>2}|", b);
+    println!("|{:>2}|", c);
+
+    let n: usize = 11;
+    // let n: usize = 3;
+
+    let mut board = Board::make(n, n);
+    for hint in board.row_hints.iter_mut() {
+        *hint = n.try_into().unwrap();
+    }
+    for hint in board.col_hints.iter_mut() {
+        *hint = n.try_into().unwrap();
+    }
+    board.print();
 }
 
 fn main() {
